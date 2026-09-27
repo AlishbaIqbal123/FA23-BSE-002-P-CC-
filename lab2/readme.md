@@ -134,8 +134,7 @@ lab2/
 ├── readme.md      ← this document
 ├── Server.py      ← multi-threaded TCP server (110 lines)
 ├── Client.py      ← interactive TCP client (85 lines)
-└── screenshots/
-    └── 01-lab2-output.png
+
 ```
 
 ### 4.1 Server.py
@@ -268,7 +267,6 @@ The single screenshot captures the server window with the main thread plus every
 the client IP and port numbers, the 3-byte header with its decoded length, and the reassembled
 message longer than 16 characters.
 
-![Server serving multiple clients simultaneously](screenshots/01-lab2-output.png)
 
 **To capture it:** maximise the terminal and increase the font size so the text stays legible when
 printed. Start the server, then open `Client.py` in two or three further terminals and send a message
@@ -391,4 +389,3 @@ This lab was submitted as original work. All code was written and tested by the 
 above. No third-party libraries were used — only the Python standard library modules `socket`
 and `threading`.
 
-**Signature:** ____________________  **Date:** ______________
