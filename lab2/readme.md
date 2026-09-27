@@ -5,15 +5,9 @@
 | **Lab Number** | 2 |
 | **Course** | Parallel and Distributed Computing |
 | **Topic** | Sockets, the `threading` module, thread synchronisation, application-level protocols |
-| **Student Name** | `[Your Name]` |
-| **Roll Number** | `[Your Roll Number]` |
-| **Section** | `[Your Section]` |
-| **Instructor** | `[Instructor Name]` |
-| **Date** | `[Date of submission]` |
-| **Language / Version** | Python 3 (tested on 3.13.14) |
-| **Dependencies** | None — Python standard library only (`socket`, `threading`) |
 
 ---
+<img width="1917" height="396" alt="image" src="https://github.com/user-attachments/assets/8453390e-74ce-4be8-9f1b-86379d7a07d4" />
 
 ## 1. Objective
 
