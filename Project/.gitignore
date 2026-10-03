@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data - job directories and daemon state are machine specific
+server/data/
+client/data/
+benchmarks/local/
+benchmarks/remote/
+
+# Generated media is reproducible with tools/make_sample_media.py
+benchmarks/media/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
