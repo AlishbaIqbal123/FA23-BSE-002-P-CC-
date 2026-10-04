@@ -14,12 +14,14 @@ arrives, it fails instead of producing a screenshot that implies otherwise.
 
 | File | State |
 |---|---|
-| `01-startup.png` | fresh window, offline |
+| `01-startup-server.png` | live worker daemon running in terminal with network, capability & session logs |
+| `01-startup.png` | live client GUI connected online with latency ping & loaded input video asset |
+| `Screenshot 2026-10-04 181526.png` | live client GUI on the Tensor compute (CUDA) tab with matrix multiplication configured |
 | `02-connected-capabilities.png` | handshake complete - worker capabilities, latency |
 | `03-job-running.png` | mid-encode, progress bar advancing |
 | `04-job-complete.png` | result downloaded and verified |
 | `05-compute-tab.png` | the compute tab (matmul / conv2d / FFN / elementwise) |
 | `06-log-console.png` | the colour-coded log pane with each severity level |
 
-Resolution is 1440x940. Because Qt runs with `QT_QPA_PLATFORM=offscreen`, the
-capture works over SSH and in CI.
+Captured from the running application on Windows 11.
+
