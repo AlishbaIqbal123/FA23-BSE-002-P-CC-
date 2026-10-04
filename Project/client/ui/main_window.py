@@ -191,10 +191,12 @@ class MainWindow(QMainWindow):
         frame.setFixedWidth(330)
 
         self.host_edit = QLineEdit(self._default_host())
-        self.host_edit.setPlaceholderText("192.168.1.1")
+        self.host_edit.setPlaceholderText("192.168.1.1 or 127.0.0.1")
+        self.host_edit.setToolTip("IP address of the remote GPU worker daemon (e.g. 192.168.1.1).")
         self.port_edit = QSpinBox()
         self.port_edit.setRange(1, 65535)
         self.port_edit.setValue(DEFAULT_PORT)
+        self.port_edit.setToolTip("TCP port the worker listens on (default: 7575).")
 
         form = QFormLayout()
         form.setSpacing(7)
@@ -204,11 +206,13 @@ class MainWindow(QMainWindow):
 
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setObjectName("Primary")
+        self.connect_btn.setToolTip("Connect to the worker and negotiate hardware capabilities.")
         self.connect_btn.clicked.connect(self._on_connect)
         self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.clicked.connect(self._on_disconnect)
         self.disconnect_btn.setEnabled(False)
         self.ping_btn = QPushButton("Measure latency")
+        self.ping_btn.setToolTip("Send a batch of pings to measure round-trip time (RTT) and jitter.")
         self.ping_btn.clicked.connect(lambda: self._call("do_ping", 20))
         self.ping_btn.setEnabled(False)
 
@@ -219,7 +223,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         layout.addWidget(self.ping_btn)
 
-        hint = QLabel("Static IPs recommended, e.g. server 192.168.1.1 / client 192.168.1.2")
+        hint = QLabel("Static IPs recommended: e.g. Server 192.168.1.1 / Client 192.168.1.2")
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -237,10 +241,11 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(6)
         self.cap_list = QPlainTextEdit()
+        self.cap_list.setObjectName("Caps")
         self.cap_list.setReadOnly(True)
         self.cap_list.setMaximumHeight(168)
         self.cap_list.setFont(QFont("Cascadia Mono", 8))
-        self.cap_list.setPlaceholderText("worker capabilities appear after a handshake")
+        self.cap_list.setPlaceholderText("Worker capabilities appear after a handshake...")
         layout.addWidget(self.cap_list)
 
         layout.addStretch(1)
@@ -322,15 +327,20 @@ class MainWindow(QMainWindow):
         grid.setVerticalSpacing(9)
 
         self.encoder_box = QComboBox()
+        self.encoder_box.setToolTip("Video encoder engine (NVENC hardware acceleration or CPU software fallback).")
         for name in GPU_ENCODERS:
             self.encoder_box.addItem(f"{name}  -  {GPU_ENCODERS[name]}", name)
         self.encoder_box.setCurrentIndex(0)
         self.encoder_box.currentIndexChanged.connect(self._sync_presets)
 
         self.preset_box = QComboBox()
+        self.preset_box.setToolTip("Speed vs quality preset.")
+        self.preset_caption = QLabel("Encoding preset")
+        self.preset_caption.setObjectName("MetricName")
         self._sync_presets()
 
         self.res_box = QComboBox()
+        self.res_box.setToolTip("Target output resolution (preserves aspect ratio, never upscales).")
         for key in RESOLUTIONS:
             label = "keep source" if key == "source" else f"{key} ({RESOLUTIONS[key][1]}p)"
             self.res_box.addItem(label, key)
@@ -340,6 +350,7 @@ class MainWindow(QMainWindow):
         self.bitrate_box.setValue(8000)
         self.bitrate_box.setSuffix(" kbit/s")
         self.bitrate_box.setEnabled(False)
+        self.bitrate_box.setToolTip("Target average video bitrate in kbit/s (used when CRF is unchecked).")
         self.crf_check.toggled.connect(
             lambda on: (self.bitrate_box.setEnabled(on), self.crf_box.setEnabled(not on))
         )
@@ -347,8 +358,10 @@ class MainWindow(QMainWindow):
         self.crf_box = QSpinBox()
         self.crf_box.setRange(0, 51)
         self.crf_box.setValue(23)
+        self.crf_box.setToolTip("Constant Rate Factor (0-51). Lower = higher visual quality. 23 is recommended.")
 
         self.audio_box = QComboBox()
+        self.audio_box.setToolTip("Audio codec for output streams.")
         for codec in AUDIO_CODECS:
             self.audio_box.addItem(codec, codec)
 
@@ -356,17 +369,21 @@ class MainWindow(QMainWindow):
         self.audio_kbps.setRange(32, 512)
         self.audio_kbps.setValue(128)
         self.audio_kbps.setSuffix(" kbit/s")
+        self.audio_kbps.setToolTip("Audio stream bitrate in kbit/s.")
 
         pairs = [
-            ("Encoder", self.encoder_box), ("NVENC preset", self.preset_box),
-            ("Output resolution", self.res_box), ("Bitrate", self.bitrate_box),
-            ("CRF quality", self.crf_box), ("Audio codec", self.audio_box),
+            ("Video encoder", self.encoder_box), (self.preset_caption, self.preset_box),
+            ("Output resolution", self.res_box), ("Target bitrate", self.bitrate_box),
+            ("CRF quality (lower = better)", self.crf_box), ("Audio codec", self.audio_box),
             ("Audio bitrate", self.audio_kbps),
         ]
-        for index, (label, widget) in enumerate(pairs):
+        for index, (caption_item, widget) in enumerate(pairs):
             row, col = divmod(index, 2)
-            caption = QLabel(label)
-            caption.setObjectName("MetricName")
+            if isinstance(caption_item, str):
+                caption = QLabel(caption_item)
+                caption.setObjectName("MetricName")
+            else:
+                caption = caption_item
             box = QVBoxLayout()
             box.setSpacing(2)
             box.addWidget(caption)
@@ -384,19 +401,22 @@ class MainWindow(QMainWindow):
         form.setSpacing(9)
 
         self.op_box = QComboBox()
+        self.op_box.setToolTip("Mathematical workload to offload to the worker.")
         for op in COMPUTE_OPS:
             self.op_box.addItem(op, op)
         self.size_box = QSpinBox()
         self.size_box.setRange(64, 8192)
         self.size_box.setValue(2048)
         self.size_box.setSingleStep(256)
+        self.size_box.setToolTip("Matrix or tensor dimension N for N×N workloads.")
         self.iters_box = QSpinBox()
         self.iters_box.setRange(1, 500)
         self.iters_box.setValue(20)
+        self.iters_box.setToolTip("Number of compute iterations for benchmarking throughput.")
 
         note = QLabel(
-            "Runs a CUDA kernel on the worker. Requires PyTorch with CUDA on the "
-            "worker; falls back to NumPy/CPU when it is absent."
+            "Runs a hardware-accelerated CUDA kernel on the remote worker node. Requires PyTorch "
+            "with CUDA on the worker; automatically falls back to NumPy/CPU when absent."
         )
         note.setObjectName("Hint")
         note.setWordWrap(True)
@@ -481,6 +501,11 @@ class MainWindow(QMainWindow):
         preferred = "p4" if encoder.endswith("_nvenc") else "medium"
         if preferred in options:
             self.preset_box.setCurrentIndex(list(options).index(preferred))
+        if hasattr(self, "preset_caption"):
+            if encoder.endswith("_nvenc"):
+                self.preset_caption.setText("NVENC Preset (P1-P7)")
+            else:
+                self.preset_caption.setText("CPU Preset (Speed vs Quality)")
 
     def _start_worker(self) -> None:
         self.thread = QThread(self)
@@ -651,11 +676,22 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, str)
     def _on_state(self, state: str, detail: str) -> None:
-        colour = STATE_COLOURS.get(state, "#8a93a6")
+        colour = STATE_COLOURS.get(state, "#94a3b8")
+        pill_bg = {
+            "online": "#064e3b",
+            "done": "#064e3b",
+            "running": "#1e3a8a",
+            "uploading": "#451a03",
+            "submitting": "#451a03",
+            "downloading": "#451a03",
+            "connecting": "#451a03",
+            "error": "#450a0a",
+            "offline": "#1e293b",
+        }.get(state, "#1e293b")
         self.state_pill.setText(state.upper())
         self.state_pill.setStyleSheet(
-            f"background:#262b36;border:1px solid {colour};border-radius:11px;"
-            f"color:{colour};padding:4px 12px"
+            f"background:{pill_bg};border:1.5px solid {colour};border-radius:11px;"
+            f"color:{colour};padding:4px 12px;font-weight:700;"
         )
         self.status_label.setStyleSheet(f"color:{colour}")
         self.status_label.setText(f"{state}: {detail}" if detail else state)
@@ -716,19 +752,22 @@ class MainWindow(QMainWindow):
     def _format_caps(caps: dict) -> str:
         if not caps:
             return ""
-        rows = [
-            ("worker", caps.get("hostname", "?")),
-            ("os", caps.get("os", "?")),
-            ("gpu", caps.get("gpu_name") or "none detected"),
-            ("nvenc", "yes" if caps.get("nvenc_available") else "no"),
-            ("cuda", caps.get("cuda_device") or "no"),
-            ("pytorch", "yes" if caps.get("torch_available") else "no"),
-            ("ffmpeg", (caps.get("ffmpeg_version") or "n/a").split(" | ")[0]),
-            ("encoders", ", ".join(caps.get("hardware_encoders", [])) or "none"),
-            ("engines", ", ".join(caps.get("engines", [])) or "none"),
-            ("cpus", str(caps.get("cpu_count", "?"))),
-        ]
-        return "\n".join(f"{name:<10} {value}" for name, value in rows)
+        gpu = caps.get("gpu_name") or "None detected"
+        nvenc = "Active (Hardware Accelerated)" if caps.get("nvenc_available") else "Unavailable (CPU Fallback)"
+        cuda = caps.get("cuda_device") or "Unavailable"
+        torch = "Available" if caps.get("torch_available") else "NumPy fallback"
+        ffmpeg_ver = (caps.get("ffmpeg_version") or "n/a").split(" | ")[0]
+        encoders = ", ".join(caps.get("hardware_encoders", [])) or "libx264, mpeg4 (CPU)"
+        cpus = str(caps.get("cpu_count", "?"))
+
+        return (
+            f"Host System  : {caps.get('hostname', '?')} ({caps.get('os', '?')})\n"
+            f"GPU Device   : {gpu}\n"
+            f"NVENC Engine : {nvenc}\n"
+            f"CUDA / Torch : {cuda} (PyTorch: {torch})\n"
+            f"Encoders     : {encoders}\n"
+            f"FFmpeg Build : {ffmpeg_ver} | CPUs: {cpus}"
+        )
 
     @pyqtSlot(dict)
     def _on_rtt(self, stats: dict) -> None:
