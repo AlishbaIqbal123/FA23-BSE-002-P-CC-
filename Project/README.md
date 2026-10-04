@@ -57,6 +57,45 @@ helper that assigns static addresses on both sides.
   speedup and network overhead separately, so offloading is never made to look
   free.
 
+## Screenshots & Visual Walkthrough
+
+### 1. Connected Client & Hardware Capability Negotiation
+The PyQt6 client connects over TCP, negotiates hardware acceleration capabilities (NVENC, CUDA, CPU encoders), tracks live network latency and jitter, and configures the transcoding profile.
+
+![Client Connected](screenshots/02-connected-capabilities.png)
+
+### 2. Live Task Offloading & Dual Progress Streaming
+Streaming architecture tracks simultaneous progress: upload/download transmission and remote FFmpeg worker execution, with live transfer rates and elapsed time.
+
+![Job Running](screenshots/03-job-running.png)
+
+### 3. Verified Task Completion & Automatic Download
+Completed outputs stream back in framed chunks, undergoing end-to-end SHA-256 verification before final promotion to local storage.
+
+![Job Complete](screenshots/04-job-complete.png)
+
+<details>
+<summary><b>Click to view Worker Daemon, Tensor Compute, and Log Console</b></summary>
+
+<br>
+
+#### 4. Worker Daemon Initialized
+Threaded daemon running on port 7575, probing GPU/CPU acceleration, detecting encoders, and running the accept loop.
+
+![Worker Daemon](screenshots/01-startup-server.png)
+
+#### 5. Tensor Compute Offloading (CUDA / NumPy)
+Offloading numeric compute workloads (matrix multiplication, 2D convolutions, transformer feed-forward) with benchmark timings.
+
+![Tensor Compute](screenshots/05-compute-tab.png)
+
+#### 6. Structured Diagnostic Log Terminal
+Embedded log console with level-coded syntax highlighting (`OK`, `INFO`, `WARN`, `ERROR`) for protocol tracing.
+
+![Log Console](screenshots/06-log-console.png)
+
+</details>
+
 ## Layout
 
 ```
