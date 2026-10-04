@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSlot
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -69,25 +69,26 @@ from client.ui.theme import build_stylesheet
 VIDEO_FILTER = "Video files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mpg *.mpeg *.ts);;All files (*)"
 
 STATE_COLOURS = {
-    "offline": "#8a93a6",
-    "connecting": "#e0b155",
-    "online": "#37b3a4",
-    "uploading": "#e0b155",
-    "submitting": "#e0b155",
-    "running": "#3d6fd4",
-    "downloading": "#e0b155",
-    "done": "#37b3a4",
-    "error": "#e0657a",
+    "offline": "#94a3b8",
+    "connecting": "#f59e0b",
+    "online": "#10b981",
+    "uploading": "#38bdf8",
+    "submitting": "#38bdf8",
+    "running": "#6366f1",
+    "downloading": "#38bdf8",
+    "done": "#10b981",
+    "error": "#ef4444",
 }
 
 
-def card(title: str) -> tuple[QFrame, QVBoxLayout]:
+def card(title: str, icon: str = "") -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setObjectName("Card")
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(14, 12, 14, 14)
-    layout.setSpacing(9)
-    label = QLabel(title.upper())
+    layout.setContentsMargins(15, 13, 15, 15)
+    layout.setSpacing(10)
+    heading = f"{icon}  {title.upper()}" if icon else title.upper()
+    label = QLabel(heading)
     label.setObjectName("CardTitle")
     layout.addWidget(label)
     return frame, layout
@@ -96,16 +97,18 @@ def card(title: str) -> tuple[QFrame, QVBoxLayout]:
 def metric(label: str) -> tuple[QFrame, QLabel]:
     """A titled metric tile. The caller must keep the frame alive."""
     frame = QFrame()
-    frame.setObjectName("Card")
-    frame.setMinimumWidth(112)
+    frame.setObjectName("MetricTile")
+    frame.setMinimumWidth(100)
     frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     box = QVBoxLayout(frame)
     box.setContentsMargins(10, 8, 10, 8)
-    box.setSpacing(1)
+    box.setSpacing(2)
     name = QLabel(label)
     name.setObjectName("MetricName")
+    name.setAlignment(Qt.AlignmentFlag.AlignCenter)
     value = QLabel("--")
     value.setObjectName("Metric")
+    value.setAlignment(Qt.AlignmentFlag.AlignCenter)
     box.addWidget(name)
     box.addWidget(value)
     return frame, value
@@ -115,8 +118,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Remote GPU Rendering - Distributed Task Offloading")
-        self.setMinimumSize(1180, 780)
-        self.resize(1360, 880)
+        self.setMinimumSize(1180, 770)
+        self.resize(1300, 830)
         self.setAcceptDrops(True)
 
         self.thread: QThread | None = None
@@ -127,6 +130,11 @@ class MainWindow(QMainWindow):
 
         self._build()
         self._start_worker()
+
+        self.heartbeat_timer = QTimer(self)
+        self.heartbeat_timer.setInterval(12000)
+        self.heartbeat_timer.timeout.connect(self._on_heartbeat)
+
         self._log("info", "client ready - configure the worker address and press Connect")
 
     # ------------------------------------------------------------------ UI
@@ -136,7 +144,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(14, 12, 14, 12)
-        outer.setSpacing(11)
+        outer.setSpacing(10)
 
         outer.addLayout(self._header())
         body = QHBoxLayout()
@@ -144,19 +152,24 @@ class MainWindow(QMainWindow):
         body.addWidget(self._connection_card(), 0)
 
         right = QVBoxLayout()
-        right.setSpacing(11)
+        right.setSpacing(10)
         right.addWidget(self._config_card(), 1)
-        right.addWidget(self._progress_card())
+        right.addWidget(self._progress_card(), 0)
         body.addLayout(right, 1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         top = QWidget()
+        top.setMinimumHeight(550)
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.addLayout(body)
         splitter.addWidget(top)
         splitter.addWidget(self._log_panel())
-        splitter.setSizes([470, 300])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([560, 180])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
         outer.addWidget(splitter, 1)
         outer.addLayout(self._footer())
 
@@ -164,30 +177,30 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        title = QLabel("Remote GPU Rendering")
+        title = QLabel("Remote GPU Accelerator")
         title.setObjectName("Title")
-        subtitle = QLabel("distributed task offloading client")
+        subtitle = QLabel("Distributed Task Offloading & GPU Hardware Acceleration Client")
         subtitle.setObjectName("Subtitle")
         column = QVBoxLayout()
-        column.setSpacing(0)
+        column.setSpacing(2)
         column.addWidget(title)
         column.addWidget(subtitle)
         row.addLayout(column)
         row.addStretch(1)
 
-        self.state_pill = QLabel("OFFLINE")
+        self.state_pill = QLabel("⚪ OFFLINE")
         self.state_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.state_pill.setMinimumWidth(110)
+        self.state_pill.setMinimumWidth(130)
         self.state_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         self.state_pill.setStyleSheet(
-            "background:#262b36;border:1px solid #333a49;border-radius:11px;"
-            f"color:{STATE_COLOURS['offline']};padding:4px 12px"
+            "background:#0f172a;border:1.5px solid #475569;border-radius:12px;"
+            f"color:{STATE_COLOURS['offline']};padding:5px 14px;"
         )
         row.addWidget(self.state_pill)
         return row
 
     def _connection_card(self) -> QWidget:
-        frame, layout = card("worker connection")
+        frame, layout = card("worker connection", "🌐")
         frame.setFixedWidth(330)
 
         self.host_edit = QLineEdit(self._default_host())
@@ -231,9 +244,9 @@ class MainWindow(QMainWindow):
         layout.addSpacing(6)
         grid = QGridLayout()
         grid.setSpacing(7)
-        self.rtt_metric, self.rtt_value = metric("ROUND TRIP")
+        self.rtt_metric, self.rtt_value = metric("PING (RTT)")
         self.jit_metric, self.jit_value = metric("JITTER")
-        self.queued_metric, self.queued_value = metric("QUEUE")
+        self.queued_metric, self.queued_value = metric("QUEUE SLOTS")
         grid.addWidget(self.rtt_metric, 0, 0)
         grid.addWidget(self.jit_metric, 0, 1)
         grid.addWidget(self.queued_metric, 1, 0, 1, 2)
@@ -243,21 +256,22 @@ class MainWindow(QMainWindow):
         self.cap_list = QPlainTextEdit()
         self.cap_list.setObjectName("Caps")
         self.cap_list.setReadOnly(True)
-        self.cap_list.setMaximumHeight(168)
+        self.cap_list.setMinimumHeight(130)
+        self.cap_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.cap_list.setFont(QFont("Cascadia Mono", 8))
         self.cap_list.setPlaceholderText("Worker capabilities appear after a handshake...")
-        layout.addWidget(self.cap_list)
-
-        layout.addStretch(1)
+        layout.addWidget(self.cap_list, 1)
         return frame
 
     def _config_card(self) -> QWidget:
-        frame, layout = card("job configuration")
+        frame, layout = card("job configuration", "⚙️")
+        frame.setMinimumHeight(355)
 
         self.file_edit = QLineEdit()
         self.file_edit.setReadOnly(True)
-        self.file_edit.setPlaceholderText("drag a video file here, or press Browse")
-        browse = QPushButton("Browse...")
+        self.file_edit.setPlaceholderText("Drag and drop a video file here, or click Browse...")
+        browse = QPushButton("📂 Browse File...")
+        browse.setMinimumHeight(32)
         browse.clicked.connect(self._on_browse)
         row = QHBoxLayout()
         row.setSpacing(7)
@@ -265,42 +279,39 @@ class MainWindow(QMainWindow):
         row.addWidget(browse)
         layout.addLayout(row)
 
-        self.file_info = QLabel("no input selected")
-        self.file_info.setObjectName("Hint")
+        self.file_info = QLabel("No video selected. Choose an input video above.")
+        self.file_info.setObjectName("FileBadge")
         layout.addWidget(self.file_info)
 
-        # Built before the tabs because the CRF / bitrate toggle inside the
-        # transcode tab needs this widget to already exist.
-        self.crf_check = QCheckBox("use a target bitrate instead of a CRF quality value")
+        # Widgets built before tabs so _transcode_tab can reference them
+        self.crf_check = QCheckBox("Use target bitrate (disables CRF)")
+        self.out_edit = QLineEdit("output.mp4")
+        self.out_edit.setToolTip("Destination filename for the rendered output.")
 
         tabs = QTabWidget()
         self.tabs = tabs
-        tabs.addTab(self._transcode_tab(), "Video transcode (NVENC / CUDA)")
-        tabs.addTab(self._compute_tab(), "Tensor compute (CUDA)")
+        self.tabs.setMinimumHeight(245)
+        tabs.addTab(self._transcode_tab(), "Video Transcode (NVENC / CPU)")
+        tabs.addTab(self._compute_tab(), "Tensor Compute (CUDA / Torch)")
         layout.addWidget(tabs, 1)
-
-        self.out_edit = QLineEdit("output.mp4")
-        out_form = QFormLayout()
-        out_form.setSpacing(7)
-        out_form.addRow("Output file", self.out_edit)
-        layout.addLayout(out_form)
-        layout.addWidget(self.crf_check)
         return frame
 
     def _progress_card(self) -> QWidget:
-        frame, layout = card("live progress")
-        frame.setFixedHeight(158)
+        frame, layout = card("live progress & metrics", "▶")
+        frame.setFixedHeight(180)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(7)
 
         self.transfer_bar = QProgressBar()
         self.transfer_bar.setRange(0, 100)
         self.transfer_bar.setValue(0)
-        self.transfer_bar.setFormat("transfer  %p%")
+        self.transfer_bar.setFormat("network transfer:  %p%")
         layout.addWidget(self.transfer_bar)
 
         self.job_bar = QProgressBar()
         self.job_bar.setRange(0, 100)
         self.job_bar.setValue(0)
-        self.job_bar.setFormat("job  %p%")
+        self.job_bar.setFormat("remote worker execution:  %p%")
         layout.addWidget(self.job_bar)
 
         self.detail_label = QLabel("idle")
@@ -321,10 +332,14 @@ class MainWindow(QMainWindow):
 
     def _transcode_tab(self) -> QWidget:
         page = QWidget()
-        grid = QGridLayout(page)
-        grid.setContentsMargins(6, 10, 6, 6)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(9)
+        page.setMinimumHeight(190)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(10, 6, 10, 6)
+        page_layout.setSpacing(6)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(7)
 
         self.encoder_box = QComboBox()
         self.encoder_box.setToolTip("Video encoder engine (NVENC hardware acceleration or CPU software fallback).")
@@ -371,27 +386,43 @@ class MainWindow(QMainWindow):
         self.audio_kbps.setSuffix(" kbit/s")
         self.audio_kbps.setToolTip("Audio stream bitrate in kbit/s.")
 
-        pairs = [
-            ("Video encoder", self.encoder_box), (self.preset_caption, self.preset_box),
-            ("Output resolution", self.res_box), ("Target bitrate", self.bitrate_box),
-            ("CRF quality (lower = better)", self.crf_box), ("Audio codec", self.audio_box),
-            ("Audio bitrate", self.audio_kbps),
+        # 3 columns x 3 rows grid:
+        # Row 0: Encoder | Preset | Resolution
+        # Row 1: CRF | Bitrate | Rate Mode Toggle
+        # Row 2: Audio Codec | Audio Bitrate | Destination Filename
+        triplets = [
+            # Row 0
+            ("Video encoder", self.encoder_box, 0, 0),
+            (self.preset_caption, self.preset_box, 0, 1),
+            ("Output resolution", self.res_box, 0, 2),
+            # Row 1
+            ("CRF quality (lower = better)", self.crf_box, 1, 0),
+            ("Target bitrate", self.bitrate_box, 1, 1),
+            ("Rate control mode", self.crf_check, 1, 2),
+            # Row 2
+            ("Audio codec", self.audio_box, 2, 0),
+            ("Audio bitrate", self.audio_kbps, 2, 1),
+            ("Output filename", self.out_edit, 2, 2),
         ]
-        for index, (caption_item, widget) in enumerate(pairs):
-            row, col = divmod(index, 2)
+
+        for caption_item, widget, row, col in triplets:
             if isinstance(caption_item, str):
                 caption = QLabel(caption_item)
                 caption.setObjectName("MetricName")
             else:
                 caption = caption_item
             box = QVBoxLayout()
-            box.setSpacing(2)
+            box.setSpacing(3)
             box.addWidget(caption)
             box.addWidget(widget)
             grid.addLayout(box, row, col)
+            grid.setRowMinimumHeight(row, 46)
+
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        grid.setRowStretch(grid.rowCount(), 1)
+        grid.setColumnStretch(2, 1)
+        page_layout.addLayout(grid)
+        page_layout.addStretch(1)
         return page
 
     def _compute_tab(self) -> QWidget:
@@ -452,20 +483,21 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(9)
 
-        self.submit_btn = QPushButton("Offload to GPU")
+        self.submit_btn = QPushButton("🚀  Offload to GPU")
         self.submit_btn.setObjectName("Primary")
-        self.submit_btn.setMinimumHeight(36)
+        self.submit_btn.setMinimumHeight(40)
+        self.submit_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.submit_btn.clicked.connect(self._on_submit)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton("⏹  Cancel")
         self.cancel_btn.setObjectName("Danger")
-        self.cancel_btn.setMinimumHeight(36)
+        self.cancel_btn.setMinimumHeight(40)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self._on_cancel)
-        self.open_btn = QPushButton("Open output folder")
-        self.open_btn.setMinimumHeight(36)
+        self.open_btn = QPushButton("📂  Open Output Folder")
+        self.open_btn.setMinimumHeight(40)
         self.open_btn.clicked.connect(self._on_open_outputs)
-        self.clear_btn = QPushButton("Clear log")
-        self.clear_btn.setMinimumHeight(36)
+        self.clear_btn = QPushButton("🧹  Clear Log")
+        self.clear_btn.setMinimumHeight(40)
         self.clear_btn.clicked.connect(self.terminal.clear_log)
 
         row.addWidget(self.submit_btn)
@@ -580,7 +612,7 @@ class MainWindow(QMainWindow):
         stem = safe_stem(path)
         self.out_edit.setText(f"{stem}-remote.mp4")
         self.file_info.setText(
-            f"{path.name}  |  {size / (1024 * 1024):.2f} MiB  |  {path.suffix.lower() or 'unknown'}"
+            f"📹  {path.name}  •  {size / (1024 * 1024):.2f} MiB  •  {path.suffix.upper() or 'UNKNOWN'}"
         )
         self._log("info", f"input selected: {path.name} ({size / (1024 * 1024):.2f} MiB)")
 
@@ -688,10 +720,21 @@ class MainWindow(QMainWindow):
             "error": "#450a0a",
             "offline": "#1e293b",
         }.get(state, "#1e293b")
-        self.state_pill.setText(state.upper())
+        icon = {
+            "online": "🟢",
+            "done": "✅",
+            "running": "⚡",
+            "uploading": "📤",
+            "submitting": "⏳",
+            "downloading": "📥",
+            "connecting": "🔄",
+            "error": "❌",
+            "offline": "⚪",
+        }.get(state, "●")
+        self.state_pill.setText(f"{icon} {state.upper()}")
         self.state_pill.setStyleSheet(
-            f"background:{pill_bg};border:1.5px solid {colour};border-radius:11px;"
-            f"color:{colour};padding:4px 12px;font-weight:700;"
+            f"background:{pill_bg};border:1.5px solid {colour};border-radius:12px;"
+            f"color:{colour};padding:5px 14px;font-weight:700;font-size:9pt;"
         )
         self.status_label.setStyleSheet(f"color:{colour}")
         self.status_label.setText(f"{state}: {detail}" if detail else state)
@@ -714,13 +757,19 @@ class MainWindow(QMainWindow):
     def _on_connected(self, info: dict) -> None:
         self.connect_btn.setEnabled(False)
         self.cap_list.setPlainText(self._format_caps(info.get("capabilities", {})))
+        self.heartbeat_timer.start()
 
     @pyqtSlot(str)
     def _on_disconnected(self, reason: str) -> None:
+        self.heartbeat_timer.stop()
         self.connect_btn.setEnabled(True)
         self.job_busy = False
         self.cap_list.setPlainText("")
         self._sync_buttons(online=False, busy=False)
+
+    def _on_heartbeat(self) -> None:
+        if not self.job_busy and self.disconnect_btn.isEnabled():
+            self._call("do_ping", 1)
 
     @pyqtSlot(dict)
     def _on_capabilities(self, caps: dict) -> None:

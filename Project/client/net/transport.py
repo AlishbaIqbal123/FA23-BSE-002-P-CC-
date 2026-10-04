@@ -177,6 +177,30 @@ class Transport:
         return self.sock is not None
 
     # -- latency -----------------------------------------------------------
+    def ping(self, timeout: float = 3.0) -> float:
+        """Send a single PING and wait for PONG. Returns RTT in ms or raises."""
+        if self.sock is None:
+            raise OSError("not connected")
+        nonce = uuid.uuid4().hex[:12]
+        sent = time.perf_counter()
+        old_timeout = self.sock.gettimeout()
+        self.sock.settimeout(timeout)
+        try:
+            send_json(self.sock, FrameType.PING, {"nonce": nonce, "t0": sent * 1000.0})
+            while True:
+                ftype, payload = recv_frame(self.sock)
+                if ftype is FrameType.PONG:
+                    pong = json.loads(payload.decode("utf-8"))
+                    if pong.get("nonce") == nonce:
+                        return (time.perf_counter() - sent) * 1000.0
+                elif ftype in (FrameType.LOG, FrameType.UPLOAD_ACK, FrameType.PROGRESS):
+                    continue
+                else:
+                    raise ProtocolError(f"unexpected {ftype.name} while waiting for PONG")
+        finally:
+            if self.sock is not None:
+                self.sock.settimeout(old_timeout)
+
     def ping_batch(self, count: int = 10, gap: float = 0.02) -> RttStats:
         """Send ``count`` pings and wait for each PONG, measuring the RTT."""
         assert self.sock is not None
@@ -193,7 +217,7 @@ class Transport:
                     if pong.get("nonce") == nonce:
                         stats.samples.append((time.perf_counter() - sent) * 1000.0)
                         break
-                elif ftype is FrameType.LOG:
+                elif ftype in (FrameType.LOG, FrameType.UPLOAD_ACK, FrameType.PROGRESS):
                     continue
                 else:
                     raise ProtocolError(f"unexpected {ftype.name} while waiting for PONG")

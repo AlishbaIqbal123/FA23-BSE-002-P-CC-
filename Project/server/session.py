@@ -79,6 +79,7 @@ from .engines.base import Engine, EngineResult, JobContext
 LOG = logging.getLogger("rdo.session")
 
 OUTBOUND_QUEUE_LIMIT = 512
+SESSION_IDLE_TIMEOUT = 600.0
 _PROGRESS_FIELDS = frozenset(Progress.__dataclass_fields__)
 
 
@@ -197,7 +198,7 @@ class Session:
         self.writer = threading.Thread(target=self._writer_loop, name=f"Writer-{self.tag}",
                                        daemon=True)
         self.writer.start()
-        self.sock.settimeout(30.0)
+        self.sock.settimeout(SESSION_IDLE_TIMEOUT)
         try:
             if not ip_allowed(self.peer[0], self.allowed):
                 LOG.warning("[%s] rejected: address outside %s", self.tag, self.allowed)
@@ -292,7 +293,7 @@ class Session:
     # -- dispatch ----------------------------------------------------------
     def _dispatch_once(self) -> None:
         ftype, payload = recv_frame(self.sock)
-        self.sock.settimeout(30.0)
+        self.sock.settimeout(SESSION_IDLE_TIMEOUT)
 
         if ftype in (FrameType.PING, FrameType.PING_BATCH):
             request = json.loads(payload.decode("utf-8"))
@@ -373,7 +374,7 @@ class Session:
             self._end(f"upload of {name} interrupted at {received}/{size} bytes")
             return
         finally:
-            self.sock.settimeout(30.0)
+            self.sock.settimeout(SESSION_IDLE_TIMEOUT)
 
         try:
             end = self._read_json(FrameType.UPLOAD_END)

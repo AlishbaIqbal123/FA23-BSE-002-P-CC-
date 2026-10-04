@@ -16,7 +16,6 @@ arrives, it fails instead of producing a screenshot that implies otherwise.
 |---|---|
 | `01-startup-server.png` | live worker daemon running in terminal with network, capability & session logs |
 | `01-startup.png` | live client GUI connected online with latency ping & loaded input video asset |
-| `Screenshot 2026-10-04 181526.png` | live client GUI on the Tensor compute (CUDA) tab with matrix multiplication configured |
 | `02-connected-capabilities.png` | handshake complete - worker capabilities, latency |
 | `03-job-running.png` | mid-encode, progress bar advancing |
 | `04-job-complete.png` | result downloaded and verified |

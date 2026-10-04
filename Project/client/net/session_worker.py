@@ -144,9 +144,26 @@ class SessionWorker(QObject):
         destination = self._destination_for(path, spec)
         started = time.perf_counter()
 
-        if not self.transport.is_open:
-            self.job_failed.emit("offline", "not connected to a worker")
-            return
+        # Ensure connection is alive; transparently re-establish if it timed out while configuring
+        need_reconnect = not self.transport.is_open
+        if self.transport.is_open:
+            try:
+                self.transport.ping(timeout=2.0)
+            except (OSError, ProtocolError):
+                need_reconnect = True
+
+        if need_reconnect:
+            self.log("info", f"reconnecting to worker {self.host}:{self.port}...")
+            try:
+                self.transport.close()
+                self.transport.configure(self.host, self.port)
+                self.transport.connect()
+                self.state("online", self.transport.worker_id)
+            except (OSError, ProtocolError) as exc:
+                self.log("error", f"reconnection failed: {exc}")
+                self.job_failed.emit("offline", f"cannot reach worker: {exc}")
+                self.state("offline", str(exc))
+                return
 
         asset_id = ""
         upload_seconds = 0.0
