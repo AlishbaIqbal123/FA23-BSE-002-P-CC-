@@ -1,28 +1,7 @@
-# Requirements
+# Core runtime dependencies for Remote GPU Rendering
+PyQt6>=6.5.0
+qdarktheme>=3.1.0
+numpy>=1.24.0
 
-Runtime dependencies for both the client GUI and the worker daemon.
-
-```
-PyQt6>=6.5
-qdarktheme>=3.1
-numpy>=1.24
-```
-
-`torch` is **optional** and deliberately not listed as a hard requirement: the
-compute engine imports it lazily and falls back to NumPy when it is absent, so
-the system runs on a machine that has never heard of CUDA. Install it on the
-GPU worker to get real tensor-core numbers:
-
-```
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-```
-
-FFmpeg is an external binary, not a Python package. Any reasonably recent build
-works; the project also copes with the old 2013-era builds that ship inside some
-Python wheels (no `-hide_banner`, no NVENC, no `-2` scale argument, `aac`
-encoder named `libvo_aacenc`).
-
-* Windows: <https://www.gyan.dev/ffmpeg/builds/>
-* Debian/Ubuntu: `sudo apt install ffmpeg`
-* Point the code at a specific binary with `RDO_FFMPEG` / `RDO_FFPROBE`, or
-  `python server/daemon.py --ffmpeg C:\path\to\ffmpeg.exe`
+# Optional GPU compute:
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
