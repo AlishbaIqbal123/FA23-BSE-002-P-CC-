@@ -32,7 +32,7 @@ DATA_ROOT = SERVER_DATA / "jobs"
 _HEX_ID = re.compile(r"[0-9a-f]{1,64}")
 
 
-@dataclass(slots=True)
+@dataclass
 class StagedUpload:
     asset_id: str
     name: str

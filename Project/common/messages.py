@@ -58,7 +58,7 @@ def safe_filename(name: str, fallback: str = "asset.bin") -> str:
     return base[:180]
 
 
-@dataclass(slots=True)
+@dataclass
 class JobSpec:
     job_type: str = "transcode"
     asset_name: str = "asset.bin"
@@ -125,7 +125,7 @@ class JobSpec:
         return cls(**{k: v for k, v in data.items() if k in known})
 
 
-@dataclass(slots=True)
+@dataclass
 class Progress:
     pct: float = 0.0
     stage: str = "queued"
@@ -140,7 +140,7 @@ class Progress:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@dataclass
 class JobResult:
     job_id: str = ""
     status: str = "ok"
@@ -165,7 +165,7 @@ class JobResult:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@dataclass
 class Capabilities:
     worker_id: str = ""
     hostname: str = ""
@@ -189,7 +189,7 @@ class Capabilities:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@dataclass
 class PingSample:
     nonce: str = ""
     rtt_ms: float = 0.0

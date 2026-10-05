@@ -13,7 +13,7 @@ from common.messages import JobSpec
 LogFn = Callable[[str, str], None]
 
 
-@dataclass(slots=True)
+@dataclass
 class EngineResult:
     status: str = "ok"
     encoder: str = ""
