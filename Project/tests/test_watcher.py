@@ -91,6 +91,7 @@ def test_main_window_has_watcher_tab_and_responds_to_detection(tmp_path, qapp, m
         assert win.watch_folder_edit is not None
         assert win.watcher_status_lbl is not None
         assert win.auto_submit_check.isChecked() is True
+        assert win.pick_latest_btn is not None
 
         # Simulate video detection
         test_video = tmp_path / "my_project_edit.mp4"
@@ -103,3 +104,58 @@ def test_main_window_has_watcher_tab_and_responds_to_detection(tmp_path, qapp, m
         win.shutdown_worker()
         win.deleteLater()
         qapp.processEvents()
+
+
+def test_watcher_detects_modified_or_overwritten_video(tmp_path, qapp):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"initial version" * 50)
+
+    watcher = FolderWatcher(tmp_path)
+    detected = []
+    watcher.video_detected.connect(lambda p, s: detected.append((p, s)))
+    watcher.start()
+
+    # Initial scan records existing file
+    watcher._scan()
+    qapp.processEvents()
+    assert len(detected) == 0
+
+    # Simulate overwrite with different size and mtime
+    time.sleep(0.05)
+    clip.write_bytes(b"overwritten clipchamp export" * 100)
+
+    # First scan registers modified candidate
+    watcher._scan()
+    qapp.processEvents()
+    assert clip in watcher._pending_files
+
+    # Simulate elapsed stabilization
+    size, first_seen = watcher._pending_files[clip]
+    watcher._pending_files[clip] = (size, first_seen - 2.0)
+
+    # Second scan triggers detection
+    watcher._scan()
+    qapp.processEvents()
+
+    assert len(detected) == 1
+    assert detected[0][0] == str(clip)
+    assert detected[0][1] == clip.stat().st_size
+    watcher.stop()
+
+
+def test_watcher_scan_latest_video(tmp_path, qapp):
+    v1 = tmp_path / "video1.mp4"
+    v1.write_bytes(b"first video" * 20)
+    time.sleep(0.05)
+    v2 = tmp_path / "video2.mp4"
+    v2.write_bytes(b"second video" * 40)
+
+    watcher = FolderWatcher(tmp_path)
+    detected = []
+    watcher.video_detected.connect(lambda p, s: detected.append((p, s)))
+
+    latest = watcher.scan_latest_video()
+    assert latest == v2
+    assert len(detected) == 1
+    assert detected[0][0] == str(v2)
+    assert detected[0][1] == v2.stat().st_size

@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self.watcher.start()
 
         self._log("info", "client ready - configure the worker address and press Connect")
+        self._log("info", f"auto-detecting video exports in: {self.watcher.watch_dir}")
 
     # ------------------------------------------------------------------ UI
     def _build(self) -> None:
@@ -550,12 +551,17 @@ class MainWindow(QMainWindow):
         self.watcher_toggle_btn = QPushButton("⏸ Pause Watcher")
         self.watcher_toggle_btn.clicked.connect(self._on_toggle_watcher)
 
+        self.pick_latest_btn = QPushButton("⚡ Pick Latest Video")
+        self.pick_latest_btn.setToolTip("Scan watch folder immediately and pick the most recent video export or download.")
+        self.pick_latest_btn.clicked.connect(self._on_pick_latest_video)
+
         self.launch_clipchamp_btn = QPushButton("🎬 Launch Clipchamp")
         self.launch_clipchamp_btn.setToolTip("Launch Microsoft Clipchamp video editor on this computer.")
         self.launch_clipchamp_btn.clicked.connect(self._on_launch_clipchamp)
 
         ctrl_row.addWidget(self.watcher_status_lbl)
         ctrl_row.addWidget(self.watcher_toggle_btn)
+        ctrl_row.addWidget(self.pick_latest_btn)
         ctrl_row.addWidget(self.launch_clipchamp_btn)
         ctrl_row.addStretch(1)
         layout.addLayout(ctrl_row)
@@ -864,6 +870,13 @@ class MainWindow(QMainWindow):
             self.watcher.stop()
         else:
             self.watcher.start()
+
+    def _on_pick_latest_video(self) -> None:
+        latest = self.watcher.scan_latest_video()
+        if latest:
+            self._log("ok", f"picked latest video from watch folder: {latest.name}")
+        else:
+            self._log("warn", f"no video files found in watch folder ({self.watcher.watch_dir})")
 
     @pyqtSlot(bool, str)
     def _on_watcher_state(self, active: bool, folder: str) -> None:

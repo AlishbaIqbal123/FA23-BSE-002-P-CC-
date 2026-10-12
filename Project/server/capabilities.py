@@ -139,6 +139,24 @@ def _gpu_name_from_nvidia_smi() -> str:
     return out.strip().splitlines()[0].strip()
 
 
+def _gpu_name_from_wmi() -> str:
+    """Fallback GPU discovery on Windows for integrated or non-NVIDIA GPUs."""
+    if os.name != "nt":
+        return ""
+    try:
+        code, out, _ = _run([
+            "powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"
+        ], timeout=4.0)
+        if code == 0 and out.strip():
+            lines = [line.strip() for line in out.strip().splitlines() if line.strip()]
+            if lines:
+                return lines[0]
+    except Exception:
+        pass
+    return ""
+
+
 def _probe_torch() -> tuple[bool, bool, str]:
     try:
         import torch  # type: ignore
@@ -182,7 +200,7 @@ def build_capabilities(
         caps.engines.append("transcode" if encoders else "")
     caps.engines = [e for e in caps.engines if e]
 
-    caps.gpu_name = _gpu_name_from_nvidia_smi()
+    caps.gpu_name = _gpu_name_from_nvidia_smi() or _gpu_name_from_wmi()
     torch_ok, cuda_ok, cuda_dev = _probe_torch()
     caps.torch_available = torch_ok
     caps.cuda_available = cuda_ok
