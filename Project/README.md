@@ -14,27 +14,32 @@ daemon, a bounded job queue, live progress, and checksum-verified transfers.
                                                           storage + checksums
 ```
 
-## Quick start
+## Quick start (Zero-CMD Desktop Applications)
 
-On the **worker** (the machine with the GPU):
+For a friendly, non-technical experience across two desktop computers on the same LAN, use the desktop launchers without needing to type Shell/CMD commands:
 
+### 1-Click Desktop Launchers:
+* **Unified Control Hub**: Double-click **`Launch_Hub.vbs`** (or `Launch_Hub.bat` / `python desktop_hub.py`)
+* **GPU Worker Server**: Double-click **`Launch_Server.vbs`** (or `Launch_Server.bat` / `python server/app.py`)
+* **Client Task Offloader**: Double-click **`Launch_Client.vbs`** (or `Launch_Client.bat` / `python client/app.py`)
+* **Desktop Shortcuts**: Click **"📌 Create Desktop Shortcuts"** in the Hub (or run `python tools/install_shortcuts.py`) to place shortcuts on your Windows Desktop.
+
+### Connecting in 3 Clicks over LAN:
+1. **On Server**: Open Server Node, click **`▶ Start Worker Server`**. The app displays your primary LAN IP with a **`📋 Copy IP`** button.
+2. **On Client**: Open Client Controller, click **`🔍 Scan`**. The app auto-discovers the server on your LAN via UDP beacon.
+3. Click **`Connect`** — hardware capabilities are negotiated, and you can submit video transcoding or tensor compute jobs immediately!
+
+*(For non-technical users, see the complete [Desktop User Guide](file:///c:/Users/Hp/Documents/Parallel%20and%20distributed%20computing/Project/DESKTOP_USER_GUIDE.md)).*
+
+### Classic CLI Mode (Optional for Headless Servers):
+On the **worker**:
 ```powershell
-pip install -r requirements.txt
 python server\daemon.py
 ```
-
 On the **client**:
-
 ```powershell
-pip install -r requirements.txt
 python client\app.py --host 192.168.1.1 --port 7575
 ```
-
-Connect, pick a file, press Submit. The worker encodes, the client shows
-progress, and the result is downloaded and verified.
-
-For two machines with no DHCP, see `docs/NETWORK.md` - it includes a PowerShell
-helper that assigns static addresses on both sides.
 
 ## What it does
 

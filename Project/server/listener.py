@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
+from typing import Any, Callable
 
 from common.messages import Capabilities
 from .job_queue import JobPool
@@ -25,13 +27,17 @@ READ_SIZE = 65_536
 
 class Listener:
     def __init__(self, host: str, port: int, caps: Capabilities, pool: JobPool,
-                 allowed: list[str], backlog: int = 16) -> None:
+                 allowed: list[str], backlog: int = 16,
+                 on_session_start: Callable[[Session], None] | None = None,
+                 on_session_end: Callable[[Session], None] | None = None) -> None:
         self.host = host
         self.port = port
         self.caps = caps
         self.pool = pool
         self.allowed = allowed
         self.backlog = backlog
+        self.on_session_start = on_session_start
+        self.on_session_end = on_session_end
         self.sock: socket.socket | None = None
         self._stop = threading.Event()
         self._sessions: set[Session] = set()
@@ -79,17 +85,43 @@ class Listener:
 
         def serve() -> None:
             LOG.info("connection #%d open from %s:%d", ordinal, *address)
+            if self.on_session_start:
+                try:
+                    self.on_session_start(session)
+                except Exception:
+                    pass
             try:
                 session.run()
             finally:
                 with self._lock:
                     self._sessions.discard(session)
                     self.active_connections -= 1
+                if self.on_session_end:
+                    try:
+                        self.on_session_end(session)
+                    except Exception:
+                        pass
                 LOG.info("connection #%d closed (%s:%d) | open=%d total=%d",
                          ordinal, *address, self.active_connections, self.total_connections)
 
         threading.Thread(target=serve, name=f"Session-{ordinal}-{address[0]}",
                          daemon=True).start()
+
+    def get_active_sessions_info(self) -> list[dict[str, Any]]:
+        """Return safe snapshot of active client sessions for UI monitoring."""
+        with self._lock:
+            sessions = list(self._sessions)
+        info = []
+        for s in sessions:
+            info.append({
+                "tag": getattr(s, "tag", f"{s.peer[0]}:{s.peer[1]}"),
+                "peer_ip": s.peer[0],
+                "peer_port": s.peer[1],
+                "client_name": getattr(s, "client_name", "connecting"),
+                "connected_at": getattr(s, "connected_at", time.time()),
+                "active_jobs": len(getattr(s, "jobs", {})),
+            })
+        return info
 
     def stop(self) -> None:
         self._stop.set()

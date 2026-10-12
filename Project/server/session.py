@@ -147,6 +147,9 @@ class Session:
         self.upload_seconds: dict[str, float] = {}
         self.job_upload_seconds: dict[str, float] = {}
         self.engines_by_job: dict[str, Engine] = {}
+        # Track connected timestamp for GUI monitoring
+        self.connected_at = time.time()
+
         # Why the session ended. Set exactly once, then reported in the run()
         # epilogue so a dropped connection can always be explained in the log.
         self.reason = "still running"

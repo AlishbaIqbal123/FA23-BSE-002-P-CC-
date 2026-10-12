@@ -276,6 +276,16 @@ QCheckBox::indicator:checked {
     border-color: #38bdf8;
 }
 
+/* Scroll Areas */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
 /* Scrollbars */
 QScrollBar:vertical {
     background-color: #090e1a;
@@ -352,6 +362,50 @@ QToolTip {
     padding: 6px 10px;
     border-radius: 6px;
     font-size: 9pt;
+}
+
+/* Tables */
+QTableWidget {
+    background-color: #0b1220;
+    alternate-background-color: #0e172a;
+    gridline-color: #1e293b;
+    border: 1.5px solid #23324d;
+    border-radius: 8px;
+    color: #f8fafc;
+    font-size: 9pt;
+    selection-background-color: #1d4ed8;
+    selection-color: #ffffff;
+    outline: none;
+}
+
+QTableWidget::item {
+    padding: 6px 10px;
+    border-bottom: 1px solid #141f36;
+}
+
+QTableWidget::item:selected {
+    background-color: #1e3a8a;
+    color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #0d1424;
+    color: #38bdf8;
+    font-weight: 700;
+    font-size: 8.5pt;
+    padding: 7px 10px;
+    border: none;
+    border-bottom: 2px solid #2563eb;
+    border-right: 1px solid #1e293b;
+}
+
+QHeaderView::section:last {
+    border-right: none;
+}
+
+QTableCornerButton::section {
+    background-color: #0d1424;
+    border: none;
 }
 """
 

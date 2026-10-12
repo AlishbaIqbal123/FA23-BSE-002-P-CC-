@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -52,6 +54,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from common.discovery import discover_servers, get_primary_lan_ip, test_tcp_connection
 from common.messages import (
     AUDIO_CODECS,
     COMPUTE_OPS,
@@ -61,10 +64,11 @@ from common.messages import (
     X264_PRESETS,
     JobSpec,
 )
-from common.paths import CLIENT_DATA, DEFAULT_PORT
+from common.paths import CLIENT_DATA, CREATE_NO_WINDOW, DEFAULT_PORT
 from client.net.session_worker import SessionWorker
 from client.ui.log_terminal import LogTerminal
 from client.ui.theme import build_stylesheet
+from client.watcher import FolderWatcher
 
 VIDEO_FILTER = "Video files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mpg *.mpeg *.ts);;All files (*)"
 
@@ -118,8 +122,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Remote GPU Rendering - Distributed Task Offloading")
-        self.setMinimumSize(1180, 770)
-        self.resize(1300, 830)
+        self.setMinimumSize(840, 500)
+        self.resize(1200, 780)
         self.setAcceptDrops(True)
 
         self.thread: QThread | None = None
@@ -128,12 +132,18 @@ class MainWindow(QMainWindow):
         self.job_busy = False
         self.remote_speedup: float | None = None
 
+        self.watcher = FolderWatcher(Path.home() / "Downloads")
+        self.watcher.video_detected.connect(self._on_video_detected)
+        self.watcher.watching_state.connect(self._on_watcher_state)
+
         self._build()
         self._start_worker()
 
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.setInterval(12000)
         self.heartbeat_timer.timeout.connect(self._on_heartbeat)
+
+        self.watcher.start()
 
         self._log("info", "client ready - configure the worker address and press Connect")
 
@@ -143,12 +153,28 @@ class MainWindow(QMainWindow):
         root.setObjectName("Root")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(14, 12, 14, 12)
-        outer.setSpacing(10)
+        outer.setContentsMargins(14, 10, 14, 10)
+        outer.setSpacing(8)
 
         outer.addLayout(self._header())
-        body = QHBoxLayout()
+
+        # Vertical splitter: Scrollable Dashboard Cards on top, Live Terminal on bottom
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Scrollable container for the cards to prevent overflow on any screen size/scaling
+        top_scroll = QScrollArea()
+        top_scroll.setObjectName("DashboardScroll")
+        top_scroll.setWidgetResizable(True)
+        top_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        top_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        top_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        top_container = QWidget()
+        top_container.setObjectName("TopDashboard")
+        body = QHBoxLayout(top_container)
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(11)
+
         body.addWidget(self._connection_card(), 0)
 
         right = QVBoxLayout()
@@ -157,19 +183,16 @@ class MainWindow(QMainWindow):
         right.addWidget(self._progress_card(), 0)
         body.addLayout(right, 1)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        top = QWidget()
-        top.setMinimumHeight(550)
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.addLayout(body)
-        splitter.addWidget(top)
+        top_scroll.setWidget(top_container)
+
+        splitter.addWidget(top_scroll)
         splitter.addWidget(self._log_panel())
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([560, 180])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([480, 180])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
+
         outer.addWidget(splitter, 1)
         outer.addLayout(self._footer())
 
@@ -201,7 +224,21 @@ class MainWindow(QMainWindow):
 
     def _connection_card(self) -> QWidget:
         frame, layout = card("worker connection", "🌐")
-        frame.setFixedWidth(330)
+        frame.setMinimumWidth(300)
+        frame.setMaximumWidth(350)
+
+        # Zero-Config LAN Discovery row
+        scan_row = QHBoxLayout()
+        scan_row.setSpacing(6)
+        self.servers_combo = QComboBox()
+        self.servers_combo.addItem("Select or scan server...")
+        self.servers_combo.currentIndexChanged.connect(self._on_server_selected)
+        self.scan_btn = QPushButton("🔍 Scan")
+        self.scan_btn.setToolTip("Auto-discover GPU worker servers running on the local network (LAN).")
+        self.scan_btn.clicked.connect(self._on_scan_lan)
+        scan_row.addWidget(self.servers_combo, 1)
+        scan_row.addWidget(self.scan_btn, 0)
+        layout.addLayout(scan_row)
 
         self.host_edit = QLineEdit(self._default_host())
         self.host_edit.setPlaceholderText("192.168.1.1 or 127.0.0.1")
@@ -224,22 +261,32 @@ class MainWindow(QMainWindow):
         self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.clicked.connect(self._on_disconnect)
         self.disconnect_btn.setEnabled(False)
-        self.ping_btn = QPushButton("Measure latency")
+        self.test_conn_btn = QPushButton("⚡ Test")
+        self.test_conn_btn.setToolTip("Test TCP connectivity and latency before connecting.")
+        self.test_conn_btn.clicked.connect(self._on_test_connection)
+
+        btn_row1 = QHBoxLayout()
+        btn_row1.setSpacing(6)
+        btn_row1.addWidget(self.connect_btn, 1)
+        btn_row1.addWidget(self.disconnect_btn, 1)
+        layout.addLayout(btn_row1)
+
+        self.ping_btn = QPushButton("Ping RTT")
         self.ping_btn.setToolTip("Send a batch of pings to measure round-trip time (RTT) and jitter.")
         self.ping_btn.clicked.connect(lambda: self._call("do_ping", 20))
         self.ping_btn.setEnabled(False)
 
-        row = QHBoxLayout()
-        row.setSpacing(7)
-        row.addWidget(self.connect_btn)
-        row.addWidget(self.disconnect_btn)
-        layout.addLayout(row)
-        layout.addWidget(self.ping_btn)
+        btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(6)
+        btn_row2.addWidget(self.test_conn_btn, 1)
+        btn_row2.addWidget(self.ping_btn, 1)
+        layout.addLayout(btn_row2)
 
-        hint = QLabel("Static IPs recommended: e.g. Server 192.168.1.1 / Client 192.168.1.2")
-        hint.setObjectName("Hint")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        my_lan = get_primary_lan_ip()
+        self.lan_hint = QLabel(f"Client LAN IP: {my_lan}")
+        self.lan_hint.setObjectName("Hint")
+        self.lan_hint.setWordWrap(True)
+        layout.addWidget(self.lan_hint)
 
         layout.addSpacing(6)
         grid = QGridLayout()
@@ -256,7 +303,7 @@ class MainWindow(QMainWindow):
         self.cap_list = QPlainTextEdit()
         self.cap_list.setObjectName("Caps")
         self.cap_list.setReadOnly(True)
-        self.cap_list.setMinimumHeight(130)
+        self.cap_list.setMinimumHeight(95)
         self.cap_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.cap_list.setFont(QFont("Cascadia Mono", 8))
         self.cap_list.setPlaceholderText("Worker capabilities appear after a handshake...")
@@ -265,13 +312,15 @@ class MainWindow(QMainWindow):
 
     def _config_card(self) -> QWidget:
         frame, layout = card("job configuration", "⚙️")
-        frame.setMinimumHeight(355)
+        frame.setMinimumHeight(280)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self.file_edit = QLineEdit()
         self.file_edit.setReadOnly(True)
         self.file_edit.setPlaceholderText("Drag and drop a video file here, or click Browse...")
-        browse = QPushButton("📂 Browse File...")
+        browse = QPushButton("📂 Browse...")
         browse.setMinimumHeight(32)
+        browse.setMinimumWidth(110)
         browse.clicked.connect(self._on_browse)
         row = QHBoxLayout()
         row.setSpacing(7)
@@ -290,15 +339,17 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         self.tabs = tabs
-        self.tabs.setMinimumHeight(245)
+        self.tabs.setMinimumHeight(190)
         tabs.addTab(self._transcode_tab(), "Video Transcode (NVENC / CPU)")
         tabs.addTab(self._compute_tab(), "Tensor Compute (CUDA / Torch)")
+        tabs.addTab(self._watcher_tab(), "🎬 Clipchamp Watch Folder")
         layout.addWidget(tabs, 1)
         return frame
 
     def _progress_card(self) -> QWidget:
         frame, layout = card("live progress & metrics", "▶")
-        frame.setFixedHeight(180)
+        frame.setMinimumHeight(135)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(7)
 
@@ -386,29 +437,29 @@ class MainWindow(QMainWindow):
         self.audio_kbps.setSuffix(" kbit/s")
         self.audio_kbps.setToolTip("Audio stream bitrate in kbit/s.")
 
-        # 3 columns x 3 rows grid:
-        # Row 0: Encoder | Preset | Resolution
-        # Row 1: CRF | Bitrate | Rate Mode Toggle
-        # Row 2: Audio Codec | Audio Bitrate | Destination Filename
-        triplets = [
-            # Row 0
+        # 2 columns x 4 rows grid - spacious, responsive, never overflows
+        pairs = [
+            # Row 0: Video Engine & Preset
             ("Video encoder", self.encoder_box, 0, 0),
             (self.preset_caption, self.preset_box, 0, 1),
-            ("Output resolution", self.res_box, 0, 2),
-            # Row 1
-            ("CRF quality (lower = better)", self.crf_box, 1, 0),
-            ("Target bitrate", self.bitrate_box, 1, 1),
-            ("Rate control mode", self.crf_check, 1, 2),
-            # Row 2
-            ("Audio codec", self.audio_box, 2, 0),
-            ("Audio bitrate", self.audio_kbps, 2, 1),
-            ("Output filename", self.out_edit, 2, 2),
+            # Row 1: Resolution & Filename
+            ("Output resolution", self.res_box, 1, 0),
+            ("Destination filename", self.out_edit, 1, 1),
+            # Row 2: Quality & Rate Control
+            ("CRF quality (lower = better)", self.crf_box, 2, 0),
+            (self.crf_check, self.bitrate_box, 2, 1),
+            # Row 3: Audio Settings
+            ("Audio codec", self.audio_box, 3, 0),
+            ("Audio bitrate", self.audio_kbps, 3, 1),
         ]
 
-        for caption_item, widget, row, col in triplets:
-            if isinstance(caption_item, str):
-                caption = QLabel(caption_item)
-                caption.setObjectName("MetricName")
+        for caption_item, widget, row, col in pairs:
+            if isinstance(caption_item, (str, QLabel)):
+                if isinstance(caption_item, str):
+                    caption = QLabel(caption_item)
+                    caption.setObjectName("MetricName")
+                else:
+                    caption = caption_item
             else:
                 caption = caption_item
             box = QVBoxLayout()
@@ -416,11 +467,10 @@ class MainWindow(QMainWindow):
             box.addWidget(caption)
             box.addWidget(widget)
             grid.addLayout(box, row, col)
-            grid.setRowMinimumHeight(row, 46)
+            grid.setRowMinimumHeight(row, 44)
 
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
         page_layout.addLayout(grid)
         page_layout.addStretch(1)
         return page
@@ -456,6 +506,75 @@ class MainWindow(QMainWindow):
         form.addRow("Iterations", self.iters_box)
         form.addRow("", note)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        return page
+
+    def _watcher_tab(self) -> QWidget:
+        page = QWidget()
+        page.setMinimumHeight(160)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(7)
+
+        # Row 1: Folder Selection
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(6)
+
+        folder_lbl = QLabel("Watch Folder:")
+        folder_lbl.setObjectName("MetricName")
+        self.watch_folder_edit = QLineEdit(str(self.watcher.watch_dir))
+        self.watch_folder_edit.setReadOnly(True)
+        self.watch_folder_edit.setToolTip("Directory actively monitored for new video exports from Clipchamp or other editors.")
+
+        browse_folder_btn = QPushButton("📁 Change...")
+        browse_folder_btn.setToolTip("Select a different folder to monitor.")
+        browse_folder_btn.clicked.connect(self._on_change_watch_folder)
+
+        open_folder_btn = QPushButton("📂 Open Folder")
+        open_folder_btn.setToolTip("Open the monitored folder in Windows Explorer.")
+        open_folder_btn.clicked.connect(self._on_open_watch_folder)
+
+        folder_row.addWidget(folder_lbl)
+        folder_row.addWidget(self.watch_folder_edit, 1)
+        folder_row.addWidget(browse_folder_btn)
+        folder_row.addWidget(open_folder_btn)
+        layout.addLayout(folder_row)
+
+        # Row 2: Status & Quick Launch Actions
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(8)
+
+        self.watcher_status_lbl = QLabel(f"🟢 Active - Watching: {self.watcher.watch_dir.name}")
+        self.watcher_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
+        self.watcher_status_lbl.setToolTip("Current watcher monitoring status.")
+
+        self.watcher_toggle_btn = QPushButton("⏸ Pause Watcher")
+        self.watcher_toggle_btn.clicked.connect(self._on_toggle_watcher)
+
+        self.launch_clipchamp_btn = QPushButton("🎬 Launch Clipchamp")
+        self.launch_clipchamp_btn.setToolTip("Launch Microsoft Clipchamp video editor on this computer.")
+        self.launch_clipchamp_btn.clicked.connect(self._on_launch_clipchamp)
+
+        ctrl_row.addWidget(self.watcher_status_lbl)
+        ctrl_row.addWidget(self.watcher_toggle_btn)
+        ctrl_row.addWidget(self.launch_clipchamp_btn)
+        ctrl_row.addStretch(1)
+        layout.addLayout(ctrl_row)
+
+        # Row 3: Auto-offload checkbox
+        self.auto_submit_check = QCheckBox("⚡ Auto-offload to GPU immediately upon export")
+        self.auto_submit_check.setChecked(True)
+        self.auto_submit_check.setToolTip(
+            "When checked, newly exported videos are automatically submitted to the connected GPU server without requiring you to click 'Offload'."
+        )
+        layout.addWidget(self.auto_submit_check)
+
+        # Row 4: Detection Feed / History
+        self.detected_history = QPlainTextEdit()
+        self.detected_history.setReadOnly(True)
+        self.detected_history.setMaximumHeight(65)
+        self.detected_history.setPlaceholderText("No exports detected yet. Export a video from Clipchamp to see it appear here automatically.")
+        layout.addWidget(self.detected_history)
+
         return page
 
     def _log_panel(self) -> QWidget:
@@ -600,6 +719,82 @@ class MainWindow(QMainWindow):
     def _on_disconnect(self) -> None:
         self._call("do_disconnect")
 
+    def _on_scan_lan(self) -> None:
+        self.scan_btn.setEnabled(False)
+        self.scan_btn.setText("Scanning...")
+        self._log("info", "scanning local network (LAN) for GPU worker servers...")
+
+        def run_scan():
+            servers = discover_servers(timeout=1.0)
+            QTimer.singleShot(0, lambda: self._on_scan_completed(servers))
+
+        threading.Thread(target=run_scan, daemon=True).start()
+
+    def _on_scan_completed(self, servers: list[dict]) -> None:
+        self.scan_btn.setEnabled(True)
+        self.scan_btn.setText("🔍 Scan")
+        self.servers_combo.blockSignals(True)
+        self.servers_combo.clear()
+        if not servers:
+            self.servers_combo.addItem("No servers found (click Scan)")
+            self.servers_combo.blockSignals(False)
+            self._log("warn", "no GPU worker servers detected on LAN - ensure Server application is started")
+            return
+
+        self.servers_combo.addItem(f"Found {len(servers)} server(s)...")
+        for s in servers:
+            ip = s.get("ip", "")
+            port = s.get("port", 7575)
+            host = s.get("hostname", ip)
+            gpu = s.get("gpu", "")
+            label = f"🖥️ {host} ({ip}:{port})" + (f" - {gpu}" if gpu and gpu != "Unknown" else "")
+            self.servers_combo.addItem(label, (ip, port))
+        self.servers_combo.blockSignals(False)
+        self._log("ok", f"discovered {len(servers)} GPU worker server(s) on LAN")
+        if len(servers) >= 1:
+            self.servers_combo.setCurrentIndex(1)
+
+    def _on_server_selected(self, index: int) -> None:
+        data = self.servers_combo.currentData()
+        if data and isinstance(data, (tuple, list)):
+            ip, port = data
+            self.host_edit.setText(str(ip))
+            self.port_edit.setValue(int(port))
+            self._log("info", f"selected worker server: {ip}:{port}")
+
+    def _on_test_connection(self) -> None:
+        host = self.host_edit.text().strip()
+        port = self.port_edit.value()
+        if not host:
+            self._log("error", "enter an IP address or select a server to test")
+            return
+        self.test_conn_btn.setEnabled(False)
+        self.test_conn_btn.setText("Testing...")
+
+        def run_test():
+            ok, lat, msg = test_tcp_connection(host, port, timeout=2.0)
+            QTimer.singleShot(0, lambda: self._on_test_result(ok, lat, msg))
+
+        threading.Thread(target=run_test, daemon=True).start()
+
+    def _on_test_result(self, ok: bool, latency: float, msg: str) -> None:
+        self.test_conn_btn.setEnabled(True)
+        self.test_conn_btn.setText("⚡ Test")
+        if ok:
+            self._log("ok", f"Connection test passed: {msg}")
+            QMessageBox.information(
+                self,
+                "Connection Test Passed",
+                f"✅ Successfully connected to server!\n\nHost: {self.host_edit.text()}:{self.port_edit.value()}\nLatency: {latency:.1f} ms\n\nClick 'Connect' to initialize session.",
+            )
+        else:
+            self._log("error", f"Connection test failed: {msg}")
+            QMessageBox.warning(
+                self,
+                "Connection Test Failed",
+                f"❌ Could not reach server:\n\n{msg}\n\nTroubleshooting suggestions:\n1. Make sure the Server application is running on that machine.\n2. Ensure port 7575 is allowed in Windows Firewall on the server.\n3. Verify both machines are on the same Wi-Fi or Ethernet network.",
+            )
+
     def _on_browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose an input video", str(Path.home()),
                                               VIDEO_FILTER)
@@ -616,6 +811,92 @@ class MainWindow(QMainWindow):
         )
         self._log("info", f"input selected: {path.name} ({size / (1024 * 1024):.2f} MiB)")
 
+    # -- watcher slots -----------------------------------------------------
+    def _on_change_watch_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Folder to Watch for Video Exports", str(self.watcher.watch_dir)
+        )
+        if folder:
+            p = Path(folder)
+            self.watcher.set_watch_dir(p)
+            self.watch_folder_edit.setText(str(p))
+            self._log("info", f"watch folder changed to: {p}")
+
+    def _on_open_watch_folder(self) -> None:
+        p = self.watcher.watch_dir
+        if not p.exists():
+            p.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(p)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p)])
+        except OSError as exc:
+            self._log("warn", f"could not open watch folder: {exc}")
+
+    def _on_launch_clipchamp(self) -> None:
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile("ms-clipchamp:")
+                self._log("ok", "launched Microsoft Clipchamp")
+            else:
+                self._log("info", "Clipchamp is a Windows app")
+        except Exception:
+            try:
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "ms-clipchamp:"],
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                self._log("ok", "launched Microsoft Clipchamp via shell protocol")
+            except Exception as exc:
+                self._log("warn", f"could not launch Clipchamp automatically: {exc}")
+                QMessageBox.information(
+                    self,
+                    "Launch Clipchamp",
+                    "Could not open Clipchamp automatically via protocol link.\n\n"
+                    "Please launch Clipchamp from your Windows Start Menu.",
+                )
+
+    def _on_toggle_watcher(self) -> None:
+        if self.watcher.is_active():
+            self.watcher.stop()
+        else:
+            self.watcher.start()
+
+    @pyqtSlot(bool, str)
+    def _on_watcher_state(self, active: bool, folder: str) -> None:
+        folder_name = Path(folder).name or folder
+        if hasattr(self, "watcher_status_lbl"):
+            if active:
+                self.watcher_toggle_btn.setText("⏸ Pause Watcher")
+                self.watcher_status_lbl.setText(f"🟢 Active - Watching: {folder_name}")
+                self.watcher_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
+            else:
+                self.watcher_toggle_btn.setText("▶ Resume Watcher")
+                self.watcher_status_lbl.setText("⏸ Watcher Paused")
+                self.watcher_status_lbl.setStyleSheet("color: #f59e0b; font-weight: bold;")
+
+    @pyqtSlot(str, int)
+    def _on_video_detected(self, file_path_str: str, file_size: int) -> None:
+        path = Path(file_path_str)
+        size_mb = file_size / (1024 * 1024)
+        timestamp = time.strftime("%H:%M:%S")
+        self._log("ok", f"🎬 New video detected from editor: {path.name} ({size_mb:.2f} MiB)")
+        if hasattr(self, "detected_history"):
+            self.detected_history.appendPlainText(f"[{timestamp}] {path.name} ({size_mb:.2f} MiB)")
+        self._set_file(path)
+
+        if hasattr(self, "auto_submit_check") and self.auto_submit_check.isChecked():
+            if self.worker and self.worker.transport.is_open and not self.job_busy:
+                self._log("ok", f"⚡ Auto-offload triggered: sending {path.name} to GPU server...")
+                self._on_submit()
+            elif not (self.worker and self.worker.transport.is_open):
+                self._log("warn", f"video {path.name} staged for offloading. Connect to worker server to render.")
+            elif self.job_busy:
+                self._log("warn", f"worker is currently rendering another job. {path.name} staged in input field.")
+
     # -- drag and drop -----------------------------------------------------
     def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if event.mimeData().hasUrls():
@@ -631,7 +912,7 @@ class MainWindow(QMainWindow):
 
     # -- submit ------------------------------------------------------------
     def _current_spec(self) -> JobSpec:
-        job_type = "transcode" if self.tabs.currentIndex() == 0 else "compute"
+        job_type = "compute" if self.tabs.currentIndex() == 1 else "transcode"
         spec = JobSpec(
             job_type=job_type,
             output_name=self.out_edit.text().strip() or "output.mp4",
@@ -873,6 +1154,8 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------- closing
     def shutdown_worker(self) -> None:
         """Close the transport and stop the worker thread. Safe to call twice."""
+        if hasattr(self, "watcher") and self.watcher is not None:
+            self.watcher.stop()
         if self.worker is not None:
             self.worker.shutdown()
         if self.thread is not None:

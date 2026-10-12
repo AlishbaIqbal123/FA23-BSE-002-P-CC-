@@ -83,6 +83,18 @@ class JobQueue:
                 return True
             return False
 
+    def get_snapshot(self) -> dict:
+        """Return a thread-safe snapshot of queue counters and states."""
+        with self.lock:
+            return {
+                "active_count": len(self.active),
+                "waiting_count": len(self.waiting),
+                "completed_count": len(self.results),
+                "cancelled_count": len(self.cancelled),
+                "active_ids": list(self.active),
+                "waiting_ids": list(self.waiting),
+            }
+
     def __len__(self) -> int:
         return self.pending.qsize()
 
