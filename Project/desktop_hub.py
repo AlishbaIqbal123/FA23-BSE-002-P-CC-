@@ -96,7 +96,7 @@ class DiagnosticsDialog(QDialog):
             ip_lbl.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
             if a["ip"] == primary:
                 ip_lbl.setStyleSheet("color:#38bdf8;")
-                tag = QLabel("★ PRIMARY LAN")
+                tag = QLabel(f"★ PRIMARY LAN ({a['description']})")
                 tag.setStyleSheet("color:#10b981;font-weight:700;")
             else:
                 tag = QLabel(a["description"])

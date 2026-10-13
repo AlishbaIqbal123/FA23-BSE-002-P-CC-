@@ -10,16 +10,45 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import os
 import socket
+import subprocess
 import threading
 import time
 from typing import Any, Callable
+
+from common.paths import CREATE_NO_WINDOW
 
 LOG = logging.getLogger("rdo.discovery")
 
 DEFAULT_DISCOVERY_PORT = 7576
 MAGIC_PING = b"RDO_DISCOVERY_PING_V1"
 MAGIC_PONG_PREFIX = b"RDO_DISCOVERY_PONG_V1:"
+
+
+def _windows_adapter_map() -> dict[str, str]:
+    """Query Windows for IPv4 address to interface alias mapping."""
+    if os.name != "nt":
+        return {}
+    try:
+        proc = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-NetIPAddress -AddressFamily IPv4 | Select-Object -Property IPAddress, InterfaceAlias"
+            ],
+            capture_output=True, text=True, timeout=3.0,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if proc.returncode != 0:
+            return {}
+        result: dict[str, str] = {}
+        for line in proc.stdout.strip().splitlines()[2:]:
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                result[parts[0].strip()] = parts[1].strip()
+        return result
+    except Exception:
+        return {}
 
 
 def get_local_ip_addresses() -> list[dict[str, Any]]:
@@ -38,7 +67,7 @@ def get_local_ip_addresses() -> list[dict[str, Any]]:
         pass
 
     # 2. Try routing probe to common gateway ranges
-    for probe_target in ("192.168.1.1", "10.0.0.1", "8.8.8.8", "1.1.1.1"):
+    for probe_target in ("8.8.8.8", "1.1.1.1", "10.0.0.1", "192.168.1.1"):
         try:
             probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             probe.connect((probe_target, 9))
@@ -48,6 +77,8 @@ def get_local_ip_addresses() -> list[dict[str, Any]]:
                 seen.add(ip)
         except OSError:
             pass
+
+    adapter_map = _windows_adapter_map()
 
     for ip in sorted(seen):
         try:
@@ -60,7 +91,20 @@ def get_local_ip_addresses() -> list[dict[str, Any]]:
             is_private = False
             is_link_local = False
 
-        desc = "Loopback" if is_loopback else ("Direct Cable (Link-Local)" if is_link_local else "LAN / Wi-Fi")
+        if is_loopback:
+            desc = "Loopback (Local Only)"
+        elif is_link_local:
+            desc = "Direct Cable (Link-Local)"
+        elif ip in adapter_map:
+            alias = adapter_map[ip]
+            is_virt = any(
+                k in alias.lower()
+                for k in ("vmware", "virtualbox", "vethernet", "default switch", "bluetooth")
+            )
+            desc = f"{alias} (Virtual)" if is_virt else alias
+        else:
+            desc = "LAN / Wi-Fi"
+
         addresses.append({
             "ip": ip,
             "is_loopback": is_loopback,
@@ -83,27 +127,32 @@ def get_local_ip_addresses() -> list[dict[str, Any]]:
 
 
 def get_primary_lan_ip() -> str:
-    """Return the most likely LAN IP address to share with other computers."""
+    """Return the active routable LAN IP address to share with other computers."""
+    # 1. Active routing probe: queries OS kernel for the interface that connects outbound
+    for probe_target in ("8.8.8.8", "1.1.1.1", "10.0.0.1", "192.168.1.1"):
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect((probe_target, 80))
+            ip = probe.getsockname()[0]
+            probe.close()
+            if ip and not ip.startswith("127."):
+                return ip
+        except OSError:
+            pass
+
+    # 2. Fallback: inspect adapters, filtering out virtual adapters (VMware, WSL, VirtualBox)
     addrs = get_local_ip_addresses()
-    # 1. Prefer 192.168.x.x (standard home/office Wi-Fi and Ethernet)
-    for a in addrs:
-        ip = a["ip"]
-        if ip.startswith("192.168.") and not a["is_loopback"]:
-            return ip
-    # 2. Prefer 10.x.x.x (enterprise / university LAN)
-    for a in addrs:
-        ip = a["ip"]
-        if ip.startswith("10.") and not a["is_loopback"]:
-            return ip
-    # 3. Other private non-loopback addresses (e.g. 172.16-31.x.x)
-    for a in addrs:
-        if a["is_private"] and not a["is_loopback"] and not a["is_link_local"]:
-            return a["ip"]
-    # 4. Fallback to link-local (direct cable without DHCP)
-    for a in addrs:
-        if a["is_link_local"]:
-            return a["ip"]
-    # 5. Fallback to any non-loopback
+    physical = [
+        a for a in addrs
+        if not a["is_loopback"] and not a["is_link_local"] and "virtual" not in a["description"].lower()
+    ]
+    if physical:
+        for a in physical:
+            if a["ip"].startswith("192.168.") or a["ip"].startswith("10."):
+                return a["ip"]
+        return physical[0]["ip"]
+
+    # 3. Fallback to any non-loopback
     for a in addrs:
         if not a["is_loopback"]:
             return a["ip"]

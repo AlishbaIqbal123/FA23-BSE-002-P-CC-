@@ -644,10 +644,12 @@ class MainWindow(QMainWindow):
             import json
 
             try:
-                return json.loads(state.read_text(encoding="utf-8")).get("host", "")
+                h = json.loads(state.read_text(encoding="utf-8")).get("host", "")
+                if h:
+                    return h
             except (ValueError, OSError):
-                return ""
-        return os.environ.get("RDO_WORKER", "")
+                pass
+        return os.environ.get("RDO_WORKER", "").strip() or "127.0.0.1"
 
     def _sync_presets(self) -> None:
         encoder = self.encoder_box.currentData() or "h264_nvenc"
