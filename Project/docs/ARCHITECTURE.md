@@ -154,3 +154,25 @@ substituting something the user did not ask for.
 
 A failure in one job never takes down the daemon: the session continues to serve
 the next request on the same connection, and the pool thread returns to the queue.
+
+## Watch Folder Automation Pipeline (`client/watcher.py`)
+
+To eliminate manual file picking for content creators using video editing suites (such as Microsoft Clipchamp, Adobe Premiere Pro, or CapCut), the client includes an automated watch folder pipeline:
+
+1. **Non-blocking Polling**: A `QTimer`-backed `FolderWatcher` inspects the designated watch directory (defaulting to `%USERPROFILE%\Downloads`) every 1.0 s on the GUI event loop without thread locking.
+2. **Atomic Write Stabilization (Debounce)**: Video editors stream chunks directly to disk while rendering, causing file sizes to change continuously. The watcher monitors `(file_size, mtime)` across consecutive polling cycles. Only when the file size and modification timestamp remain completely stable across debounce intervals (and temporary `.part` or `.crdownload` extensions disappear) is the export deemed final and ready.
+3. **Automatic Queue Dispatch**: The stabilized file path and byte size trigger `video_detected(path, size)`, feeding directly into the client's execution queue.
+4. **End-to-End Hands-Off Cycle**:
+   - Source export is detected in the watch folder.
+   - Client computes streaming SHA-256 and streams the raw draft over LAN to the GPU worker.
+   - Remote worker executes high-speed hardware transcode / compute with live stdout progress streaming.
+   - Rendered master is downloaded back to the client's output directory with cryptographic checksum verification.
+
+## Zero-Config LAN Discovery (`common/discovery.py`)
+
+Rather than requiring manual IP discovery via `ipconfig` or router DHCP leases, the system includes UDP broadcast auto-discovery:
+
+* **UDP Port 7576**: The daemon binds or listens on UDP `7576`.
+* **Probe / Beacon Exchange**: The client emits a lightweight UDP broadcast packet (`RDO_DISCOVERY_PING_V1`) to `255.255.255.255:7576` and local subnet broadcast addresses.
+* **Service Announcement**: Active workers respond with `RDO_DISCOVERY_PONG_V1:<json>` containing their hostname, listening IP, TCP service port (7575), and probed capabilities.
+* **Fallback & Auto-Populate**: If auto-discovery encounters restrictive firewalls or isolated subnets, the GUI displays all local network interfaces and provides direct IP input with live RTT latency probing.
