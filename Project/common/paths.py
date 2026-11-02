@@ -7,6 +7,7 @@ can never be introduced by editing two copies of a constant.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 PROTOCOL_VERSION = "1.0"
@@ -34,7 +35,7 @@ STALL_TIMEOUT = 180.0
 HEARTBEAT_INTERVAL = 2.0
 PROGRESS_MIN_INTERVAL = 0.12
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
 SERVER_DATA = Path(os.environ.get("RDO_SERVER_DATA", ROOT / "server" / "data"))
 CLIENT_DATA = Path(os.environ.get("RDO_CLIENT_DATA", ROOT / "client" / "data"))
 

@@ -24,3 +24,8 @@ benchmarks/media/
 .idea/
 Thumbs.db
 desktop.ini
+
+# PyInstaller output (publish exes via GitHub Releases)
+build/
+dist/
+*.spec
